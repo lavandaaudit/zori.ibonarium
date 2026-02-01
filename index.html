@@ -17,6 +17,8 @@
             /* ORDER */
             --accent-b: #ff5ab5;
             /* FLUX */
+            --accent-c: #00f2ff;
+            /* ETHER / NEBULA */
             --text-color: #d0c8ff;
             --glass: rgba(5, 2, 12, 0.85);
             --border: rgba(157, 138, 255, 0.2);
@@ -124,6 +126,11 @@
         .bar-b {
             background: var(--accent-b);
             box-shadow: 0 0 10px var(--accent-b);
+        }
+
+        .bar-c {
+            background: var(--accent-c);
+            box-shadow: 0 0 10px var(--accent-c);
         }
 
         .civ-info {
@@ -273,16 +280,19 @@
 
         <div class="influence-panel">
             <div class="civ-info">
-                <span style="color: var(--accent-a)">ORDER (STABILITY)</span>
-                <span style="color: var(--accent-b)">FLUX (CHAOS)</span>
+                <span style="color: var(--accent-a)">ORDER</span>
+                <span style="color: var(--accent-b)">FLUX</span>
+                <span style="color: var(--accent-c)">ETHER</span>
             </div>
             <div class="civ-bar-container">
-                <div id="bar-a" class="civ-bar bar-a" style="width: 50%"></div>
-                <div id="bar-b" class="civ-bar bar-b" style="width: 50%"></div>
+                <div id="bar-a" class="civ-bar bar-a" style="width: 33%"></div>
+                <div id="bar-b" class="civ-bar bar-b" style="width: 33%"></div>
+                <div id="bar-c" class="civ-bar bar-c" style="width: 34%"></div>
             </div>
             <div class="civ-info" style="font-size: 0.65rem; opacity: 0.6;">
                 <span id="stat-a">0.0%</span>
                 <span id="stat-b">0.0%</span>
+                <span id="stat-c">0.0%</span>
             </div>
         </div>
 
@@ -324,7 +334,8 @@
                     wind: 400.0,   // Solar wind speed (300-900). High Wind = Faster movement.
                     bz: 0.0,       // Interplanetary Magnetic Field. Negative Bz = Instability.
                     density: 5.0,  // Proton density. High Density = Brighter connections.
-                    storm: 0       // Calculated storm intensity.
+                    storm: 0,      // Calculated storm intensity.
+                    nebula: 0      // Third force: Ether intensity (based on density waves)
                 };
                 this.isSimulated = false;
             }
@@ -383,6 +394,10 @@
             calculateStorm() {
                 // Storm probability increases with Kp and Wind
                 this.data.storm = Math.max(0, (this.data.kp - 4) / 5);
+                // Nebula/Ether intensity peaks when density is high and pulses with time
+                const densityFactor = Math.min(1, this.data.density / 15);
+                const pulse = (Math.sin(Date.now() * 0.0001) + 1) / 2;
+                this.data.nebula = densityFactor * pulse;
             }
 
             updateUI() {
@@ -395,6 +410,9 @@
                 if (this.data.kp > 5) {
                     status.textContent = 'STORM ALERT';
                     status.style.color = '#ff4e4e';
+                } else if (this.data.nebula > 0.7) {
+                    status.textContent = 'NEBULA RISE';
+                    status.style.color = 'var(--accent-c)';
                 } else {
                     status.textContent = 'OPTIMAL';
                     status.style.color = '#a78dff';
@@ -502,7 +520,13 @@
 
                 // Trail effect (Opacity affected by Kp)
                 const trailAlpha = Math.max(0.1, 0.4 - (ws.kp * 0.03));
-                this.ctx.fillStyle = `rgba(1, 1, 5, ${trailAlpha})`;
+
+                // Background shifting based on Nebula force
+                const hue = 240 + (ws.nebula * 60); // Shifts from blue to purple/cyan
+                const sat = 20 + (ws.nebula * 30);
+                const lum = 2 + (ws.nebula * 5);
+
+                this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${trailAlpha})`;
                 this.ctx.fillRect(0, 0, this.w, this.h);
 
                 // CAMERA ZOOM LOGIC
@@ -594,21 +618,30 @@
 
                 document.getElementById('nodes-count').textContent = `Nodes: ${CONFIG.nodeCount} | Edges: ${edges}`;
 
-                // Update Stability Ratio
-                const orderPct = 50 + (ws.bz * 5) - (ws.kp * 2);
-                const fluxPct = 100 - orderPct;
+                // Update Stability Ratio (Three-way balance)
+                const total = 100;
+                const etherPct = ws.nebula * 40; // Max 40% influence
+                const remaining = total - etherPct;
+
+                const orderRatio = (50 + (ws.bz * 5) - (ws.kp * 2)) / 100;
+                const orderPct = Math.max(0, Math.min(remaining, remaining * orderRatio));
+                const fluxPct = remaining - orderPct;
+
                 document.getElementById('bar-a').style.width = orderPct + '%';
                 document.getElementById('bar-b').style.width = fluxPct + '%';
-                document.getElementById('stat-a').textContent = Math.max(0, Math.min(100, orderPct)).toFixed(1) + '%';
-                document.getElementById('stat-b').textContent = Math.max(0, Math.min(100, fluxPct)).toFixed(1) + '%';
+                document.getElementById('bar-c').style.width = etherPct + '%';
+
+                document.getElementById('stat-a').textContent = orderPct.toFixed(1) + '%';
+                document.getElementById('stat-b').textContent = fluxPct.toFixed(1) + '%';
+                document.getElementById('stat-c').textContent = etherPct.toFixed(1) + '%';
             }
 
             drawGlow(time, ws) {
                 this.ctx.save();
                 this.ctx.globalCompositeOperation = 'screen';
 
-                // Density affects ambient brightness
-                const ambient = 0.05 + (ws.density * 0.005);
+                // Density and Nebula force effect ambient brightness
+                const ambient = 0.05 + (ws.density * 0.005) + (ws.nebula * 0.1);
 
                 const g1 = this.ctx.createRadialGradient(this.w * 0.3, this.h * 0.3, 0, this.w * 0.3, this.h * 0.3, this.w * 0.6);
                 g1.addColorStop(0, `hsla(250, 60%, 15%, ${ambient})`);
@@ -617,6 +650,20 @@
                 const g2 = this.ctx.createRadialGradient(this.w * 0.7, this.h * 0.7, 0, this.w * 0.7, this.h * 0.7, this.w * 0.6);
                 g2.addColorStop(0, `hsla(320, 60%, 15%, ${ambient})`);
                 g2.addColorStop(1, 'transparent');
+
+                // Third Nebula Glow (ETHER)
+                if (ws.nebula > 0.2) {
+                    const g3 = this.ctx.createRadialGradient(
+                        this.w * (0.5 + Math.sin(time * 0.2) * 0.2),
+                        this.h * (0.5 + Math.cos(time * 0.2) * 0.2),
+                        0,
+                        this.w * 0.5, this.h * 0.5, this.w * 0.8
+                    );
+                    g3.addColorStop(0, `hsla(180, 70%, 20%, ${ws.nebula * 0.2})`);
+                    g3.addColorStop(1, 'transparent');
+                    this.ctx.fillStyle = g3;
+                    this.ctx.fillRect(0, 0, this.w, this.h);
+                }
 
                 this.ctx.fillStyle = g1;
                 this.ctx.fillRect(0, 0, this.w, this.h);
