@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IBONARIUM — Жива Павутина v3.0</title>
+    <title>IBONARIUM — Жива Павутина v3.1</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
@@ -14,11 +14,8 @@
         :root {
             --bg-color: #010105;
             --accent-a: #9d8aff;
-            /* ORDER */
             --accent-b: #ff5ab5;
-            /* FLUX */
             --accent-c: #00f2ff;
-            /* ETHER / NEBULA */
             --text-color: #d0c8ff;
             --glass: rgba(5, 2, 12, 0.85);
             --border: rgba(157, 138, 255, 0.2);
@@ -50,8 +47,7 @@
             z-index: 10;
             pointer-events: none;
             color: var(--text-color);
-            width: 200px;
-            /* Narrower UI */
+            width: 220px;
             text-shadow: 0 0 15px rgba(0, 0, 0, 0.9);
         }
 
@@ -73,7 +69,6 @@
         .metrics-grid {
             display: grid;
             grid-template-columns: 1fr;
-            /* Vertical for narrowness */
             gap: 8px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
@@ -107,7 +102,6 @@
 
         .civ-bar-container {
             height: 2px;
-            /* Thinner */
             background: rgba(255, 255, 255, 0.05);
             margin: 8px 0;
             display: flex;
@@ -157,6 +151,10 @@
             gap: 4px;
         }
 
+        .sync-active.error {
+            color: #ef4444;
+        }
+
         .sync-dot {
             width: 4px;
             height: 4px;
@@ -179,14 +177,12 @@
             }
         }
 
-        /* Mobile Adaptation */
         @media (max-width: 600px) {
             #ui {
                 top: 15px;
                 left: 15px;
                 width: calc(100% - 30px);
-                max-width: 160px;
-                /* Even narrower on mobile */
+                max-width: 180px;
             }
 
             h1 {
@@ -215,6 +211,7 @@
             border: 1px solid rgba(255, 100, 100, 0.2);
             display: none;
             z-index: 100;
+            font-family: 'JetBrains Mono', monospace;
         }
 
         .uptime-container {
@@ -229,14 +226,14 @@
         }
 
         .uptime-label {
-            color: var(--accent);
+            color: var(--accent-a);
             display: block;
             margin-bottom: 5px;
             font-weight: 700;
         }
 
         .uptime-value {
-            font-family: 'Space Mono', monospace;
+            font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
             color: #fff;
             display: block;
@@ -271,6 +268,10 @@
                 <span class="label">Density</span>
                 <span class="value" id="dens-val">--</span>
             </div>
+            <div class="metric">
+                <span class="label">F10.7 Flux</span>
+                <span class="value" id="f107-val">--</span>
+            </div>
         </div>
 
         <div class="uptime-container">
@@ -297,9 +298,9 @@
         </div>
 
         <div class="status-footer">
-            <div class="sync-active">
+            <div id="sync-indicator" class="sync-active">
                 <div class="sync-dot"></div>
-                Real-time NOAA Stream Active
+                <span id="sync-text">Connecting to NOAA...</span>
             </div>
             <div id="update-timer">Next update in: 60s</div>
             <div id="nodes-count">Nodes: 0 | Edges: 0</div>
@@ -307,163 +308,339 @@
     </div>
 
     <div id="proxy-warning">
-        ⚠️ CORS Blocked. Using simulated live stream. Run via server for real NOAA data.
+        NOAA API unavailable. Using simulated data.
     </div>
 
     <script>
         /**
-         * IBONARIUM v3.0 - THE LIVING CONSTELLATION
-         * Architecture: Space-Logic Driven Procedural Animation
+         * IBONARIUM v3.1 — THE LIVING CONSTELLATION
+         * Fixed: Direct NOAA API calls (no CORS proxy needed)
+         * NOAA supports Access-Control-Allow-Origin: * on all endpoints.
+         *
+         * Data sources:
+         *   Kp Index:   services.swpc.noaa.gov/products/noaa-planetary-k-index.json
+         *   Solar Wind: services.swpc.noaa.gov/text/ace-swepam.txt
+         *   Bz Field:   services.swpc.noaa.gov/text/ace-magnetometer.txt
+         *   F10.7 Flux: services.swpc.noaa.gov/json/f107_cm_flux.json
          */
 
         const CONFIG = {
-            nodeCount: 450,
-            connectionDist: 160,
-            baseSpeed: 0.08,
-            friction: 0.99,
-            updateInterval: 60000,
-            proxy: 'https://api.allorigins.win/raw?url=',
-            cameraZoom: 1.0,
-            starScale: 1.2
+            baseNodeCount: 400,
+            connectionDist: 150,
+            baseSpeed: 0.06,
+            friction: 0.992,
+            updateInterval: 60000,   // 60s — NOAA data updates every ~5 min
+            starScale: 1.0
         };
 
+        /* ─── Weather System ─── */
         class WeatherSystem {
             constructor() {
                 this.data = {
-                    kp: 2.0,       // Global magnetic activity (0-9). High Kp = More Chaos.
-                    wind: 400.0,   // Solar wind speed (300-900). High Wind = Faster movement.
-                    bz: 0.0,       // Interplanetary Magnetic Field. Negative Bz = Instability.
-                    density: 5.0,  // Proton density. High Density = Brighter connections.
-                    storm: 0,      // Calculated storm intensity.
-                    nebula: 0      // Third force: Ether intensity (based on density waves)
+                    kp: 2.0,
+                    wind: 380.0,
+                    bz: 0.0,
+                    density: 5.0,
+                    f107: 120.0,
+                    storm: 0,
+                    nebula: 0
                 };
                 this.isSimulated = false;
+                this.syncCount = 0;
+                this.lastSyncError = null;
             }
 
             async sync() {
                 try {
-                    // We try to fetch real data from NOAA.
-                    // Note: If running locally via file://, CORS will block this.
-                    const sources = [
-                        'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json',
-                        'https://services.swpc.noaa.gov/products/solar-wind/plasma-5-minute.json'
-                    ];
-
-                    const [kpRes, windRes] = await Promise.all([
-                        fetch(CONFIG.proxy + encodeURIComponent(sources[0])).then(r => r.json()),
-                        fetch(CONFIG.proxy + encodeURIComponent(sources[1])).then(r => r.json())
+                    const [kpData, windData, magData, f107Data] = await Promise.allSettled([
+                        this.fetchKp(),
+                        this.fetchSolarWind(),
+                        this.fetchMagneticField(),
+                        this.fetchF107()
                     ]);
 
-                    // Parse Kp (Last value in array)
-                    const latestKp = parseFloat(kpRes[kpRes.length - 1][1]);
-                    this.data.kp = isNaN(latestKp) ? this.data.kp : latestKp;
+                    // Parse Kp
+                    if (kpData.status === 'fulfilled' && kpData.value !== null) {
+                        this.data.kp = kpData.value;
+                    }
 
-                    // Parse Plasma (Wind and Density)
-                    const latestPlasma = windRes[windRes.length - 1];
-                    this.data.density = parseFloat(latestPlasma[1]) || this.data.density;
-                    this.data.wind = parseFloat(latestPlasma[2]) || this.data.wind;
+                    // Parse solar wind (density + speed)
+                    if (windData.status === 'fulfilled' && windData.value !== null) {
+                        this.data.density = windData.value.density;
+                        this.data.wind = windData.value.speed;
+                    }
 
-                    // Bz isn't in plasma but we simulate its effect based on Kp
-                    this.data.bz = (4 - this.data.kp) * 1.5;
+                    // Parse Bz
+                    if (magData.status === 'fulfilled' && magData.value !== null) {
+                        this.data.bz = magData.value;
+                    }
+
+                    // Parse F10.7
+                    if (f107Data.status === 'fulfilled' && f107Data.value !== null) {
+                        this.data.f107 = f107Data.value;
+                    }
 
                     this.isSimulated = false;
+                    this.syncCount++;
+                    this.lastSyncError = null;
                     document.getElementById('proxy-warning').style.display = 'none';
+
+                    const indicator = document.getElementById('sync-indicator');
+                    indicator.classList.remove('error');
+                    document.getElementById('sync-text').textContent =
+                        `NOAA Live Stream Active (#${this.syncCount})`;
                 } catch (e) {
-                    console.warn("Real-time sync failed, falling back to simulation.", e);
+                    console.warn('NOAA sync failed, using simulation.', e);
                     this.isSimulated = true;
+                    this.lastSyncError = e.message;
                     this.simulateWeather();
                     document.getElementById('proxy-warning').style.display = 'block';
+
+                    const indicator = document.getElementById('sync-indicator');
+                    indicator.classList.add('error');
+                    document.getElementById('sync-text').textContent = 'Simulation mode';
                 }
 
                 this.calculateStorm();
                 this.updateUI();
             }
 
+            /* ── NOAA Fetchers ── */
+
+            async fetchKp() {
+                const url = 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`Kp HTTP ${res.status}`);
+                const json = await res.json();
+                // Format: [{"time_tag":"...","Kp":2.33,"a_running":9,"station_count":8}, ...]
+                const last = json[json.length - 1];
+                const val = parseFloat(last.Kp);
+                return isNaN(val) ? null : val;
+            }
+
+            async fetchSolarWind() {
+                const url = 'https://services.swpc.noaa.gov/text/ace-swepam.txt';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`SWEPAM HTTP ${res.status}`);
+                const text = await res.text();
+                const lines = text.trim().split('\n');
+
+                // Parse from the end, skip lines with status=9 (no data) or -9999.9 values
+                for (let i = lines.length - 1; i >= Math.max(0, lines.length - 50); i--) {
+                    const line = lines[i].trim();
+                    if (!line || line.startsWith('#') || line.startsWith(':')) continue;
+
+                    const parts = line.split(/\s+/);
+                    // Format: yr mo day hr min epoch status density speed temp
+                    if (parts.length >= 9) {
+                        const status = parseInt(parts[6]);
+                        const density = parseFloat(parts[7]);
+                        const speed = parseFloat(parts[8]);
+                        if (status <= 8 && density > 0 && speed > 0) {
+                            return { density, speed };
+                        }
+                    }
+                }
+                return null;
+            }
+
+            async fetchMagneticField() {
+                const url = 'https://services.swpc.noaa.gov/text/ace-magnetometer.txt';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`MAG HTTP ${res.status}`);
+                const text = await res.text();
+                const lines = text.trim().split('\n');
+
+                for (let i = lines.length - 1; i >= Math.max(0, lines.length - 50); i--) {
+                    const line = lines[i].trim();
+                    if (!line || line.startsWith('#') || line.startsWith(':')) continue;
+
+                    const parts = line.split(/\s+/);
+                    // Format: yr mo day hr min epoch status Bx By Bz Bt lat lon
+                    if (parts.length >= 12) {
+                        const status = parseInt(parts[6]);
+                        const bz = parseFloat(parts[9]);
+                        if (status <= 8 && bz > -9000) {
+                            return bz;
+                        }
+                    }
+                }
+                return null;
+            }
+
+            async fetchF107() {
+                const url = 'https://services.swpc.noaa.gov/json/f107_cm_flux.json';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`F107 HTTP ${res.status}`);
+                const json = await res.json();
+                const last = json[json.length - 1];
+                const val = parseFloat(last.flux);
+                return isNaN(val) ? null : val;
+            }
+
+            /* ── Simulation Fallback ── */
+
             simulateWeather() {
-                // Smoothly drift simulated values if API fails
-                this.data.kp += (Math.random() - 0.5) * 0.5;
+                const t = Date.now() * 0.0001;
+                this.data.kp += (Math.random() - 0.5) * 0.4;
                 this.data.kp = Math.max(0, Math.min(9, this.data.kp));
 
-                this.data.wind += (Math.random() - 0.5) * 20;
-                this.data.wind = Math.max(300, Math.min(800, this.data.wind));
+                this.data.wind += (Math.random() - 0.5) * 25;
+                this.data.wind = Math.max(280, Math.min(850, this.data.wind));
 
-                this.data.bz += (Math.random() - 0.5) * 1.0;
+                this.data.bz += (Math.random() - 0.5) * 1.2;
+                this.data.bz = Math.max(-15, Math.min(15, this.data.bz));
+
                 this.data.density += (Math.random() - 0.5) * 2;
+                this.data.density = Math.max(0.1, Math.min(30, this.data.density));
+
+                this.data.f107 += (Math.random() - 0.5) * 3;
+                this.data.f107 = Math.max(60, Math.min(250, this.data.f107));
             }
+
+            /* ── Derived Metrics ── */
 
             calculateStorm() {
-                // Storm probability increases with Kp and Wind
-                this.data.storm = Math.max(0, (this.data.kp - 4) / 5);
-                // Nebula/Ether intensity peaks when density is high and pulses with time
-                const densityFactor = Math.min(1, this.data.density / 15);
-                const pulse = (Math.sin(Date.now() * 0.0001) + 1) / 2;
-                this.data.nebula = densityFactor * pulse;
+                // Storm intensity: peaks when Kp>4 and Bz is negative (southward IMF)
+                const bzFactor = this.data.bz < 0 ? Math.abs(this.data.bz) / 10 : 0;
+                this.data.storm = Math.max(0, Math.min(1,
+                    (this.data.kp - 3) / 6 + bzFactor * 0.5
+                ));
+
+                // Nebula/Ether: density waves + F10.7 solar radio flux
+                const densityFactor = Math.min(1, this.data.density / 20);
+                const f107Factor = Math.min(1, (this.data.f107 - 70) / 180);
+                const pulse = (Math.sin(Date.now() * 0.00008) + 1) / 2;
+                this.data.nebula = (densityFactor * 0.6 + f107Factor * 0.4) * (0.5 + pulse * 0.5);
             }
+
+            /* ── UI Update ── */
 
             updateUI() {
                 document.getElementById('kp-val').textContent = this.data.kp.toFixed(1);
                 document.getElementById('wind-val').textContent = Math.round(this.data.wind) + ' km/s';
                 document.getElementById('bz-val').textContent = this.data.bz.toFixed(1) + ' nT';
                 document.getElementById('dens-val').textContent = this.data.density.toFixed(1) + ' p/cm³';
+                document.getElementById('f107-val').textContent = Math.round(this.data.f107) + ' SFU';
 
                 const status = document.getElementById('system-status');
-                if (this.data.kp > 5) {
-                    status.textContent = 'STORM ALERT';
+                if (this.data.storm > 0.5) {
+                    status.textContent = 'GEOMAG STORM';
                     status.style.color = '#ff4e4e';
-                } else if (this.data.nebula > 0.7) {
+                } else if (this.data.kp > 5) {
+                    status.textContent = 'STORM ALERT';
+                    status.style.color = '#ff6b4e';
+                } else if (this.data.nebula > 0.6) {
                     status.textContent = 'NEBULA RISE';
                     status.style.color = 'var(--accent-c)';
+                } else if (this.data.bz < -5) {
+                    status.textContent = 'SOUTHWARD IMF';
+                    status.style.color = '#f59e0b';
                 } else {
                     status.textContent = 'OPTIMAL';
                     status.style.color = '#a78dff';
                 }
             }
+
+            // Target node count based on density — more particles when space is dense
+            getTargetNodeCount() {
+                const densityMult = 0.6 + (Math.min(1, this.data.density / 15) * 0.8);
+                const f107Mult = 0.8 + (Math.min(1, (this.data.f107 - 70) / 150) * 0.4);
+                return Math.floor(CONFIG.baseNodeCount * densityMult * f107Mult);
+            }
         }
 
+        /* ─── Star Node ─── */
         class Node {
-            constructor(w, h) {
+            constructor(w, h, weatherData) {
                 this.x = Math.random() * w;
                 this.y = Math.random() * h;
-                this.vx = (Math.random() - 0.5) * 0.5;
-                this.vy = (Math.random() - 0.5) * 0.5;
-                // Bigger stars as requested
-                this.radius = (Math.random() * 2.5 + 1.0) * CONFIG.starScale;
-                this.type = Math.random() > 0.6 ? (Math.random() > 0.8 ? 'C' : 'B') : 'A'; // A=Order, B=Flux, C=Constellation Hub
+                this.vx = (Math.random() - 0.5) * 0.3;
+                this.vy = (Math.random() - 0.5) * 0.3;
+
+                // Star visual properties
+                this.baseRadius = (Math.random() * 2.0 + 0.8) * CONFIG.starScale;
+                this.radius = this.baseRadius;
+                this.type = Math.random() > 0.65 ? (Math.random() > 0.75 ? 'C' : 'B') : 'A';
                 this.phase = Math.random() * Math.PI * 2;
                 this.pulse = 0;
+                this.twinkleSpeed = 0.5 + Math.random() * 2.0;
+                this.brightness = 0.5 + Math.random() * 0.5;
+
+                // Apply initial weather-based color
+                this.applyWeatherColor(weatherData);
             }
 
-            update(weather, w, h) {
-                // MOTION LOGIC
-                // Slow down the movement as requested
-                const speedMult = CONFIG.baseSpeed * (weather.wind / 350) * (1 + weather.storm);
+            applyWeatherColor(ws) {
+                // Color temperature shifts with solar wind speed
+                // Slow wind (~300 km/s) = cool blue/white
+                // Fast wind (~700+ km/s) = warm yellow/orange
+                const windNorm = Math.min(1, (ws.wind - 280) / 500);
 
-                // Kp index adds "jitter" (chaos)
-                const jitter = weather.kp * 0.02;
+                if (this.type === 'A') {
+                    // ORDER — cool tones, shifts to warmer during fast wind
+                    const r = Math.floor(140 + windNorm * 60);
+                    const g = Math.floor(140 + windNorm * 20);
+                    const b = Math.floor(255 - windNorm * 60);
+                    this.color = { r, g, b };
+                } else if (this.type === 'B') {
+                    // FLUX — pink/magenta, intensifies with Kp
+                    const kpBoost = Math.min(1, ws.kp / 6);
+                    const r = Math.floor(200 + kpBoost * 55);
+                    const g = Math.floor(80 + kpBoost * 40);
+                    const b = Math.floor(160 + kpBoost * 40);
+                    this.color = { r, g, b };
+                } else {
+                    // HUB — white, brightens with density
+                    const densBoost = Math.min(1, ws.density / 15);
+                    const v = Math.floor(200 + densBoost * 55);
+                    this.color = { r: v, g: v, b: Math.min(255, v + 20) };
+                }
+            }
 
+            update(weather, w, h, dt) {
+                // Speed multiplier: faster with solar wind, chaotic with storms
+                const speedMult = CONFIG.baseSpeed * (weather.wind / 350) * (1 + weather.storm * 0.8);
+
+                // Jitter increases with Kp (chaos factor)
+                const jitter = weather.kp * 0.025;
                 this.vx += (Math.random() - 0.5) * jitter;
                 this.vy += (Math.random() - 0.5) * jitter;
 
-                // Solar Wind Pushes slightly to the right
-                this.vx += (weather.wind - 300) * 0.00001;
+                // Solar wind pushes stars slightly to the right
+                this.vx += (weather.wind - 300) * 0.000015;
 
-                this.x += this.vx * speedMult;
-                this.y += this.vy * speedMult;
+                // Negative Bz causes turbulent vertical drift
+                if (weather.bz < 0) {
+                    this.vy += (Math.random() - 0.5) * Math.abs(weather.bz) * 0.005;
+                }
 
-                // Screen Wrap
-                if (this.x < 0) this.x = w;
-                if (this.x > w) this.x = 0;
-                if (this.y < 0) this.y = h;
-                if (this.y > h) this.y = 0;
+                this.x += this.vx * speedMult * dt;
+                this.y += this.vy * speedMult * dt;
+
+                // Screen wrap
+                if (this.x < -10) this.x = w + 10;
+                if (this.x > w + 10) this.x = -10;
+                if (this.y < -10) this.y = h + 10;
+                if (this.y > h + 10) this.y = -10;
 
                 this.vx *= CONFIG.friction;
                 this.vy *= CONFIG.friction;
 
-                // Animation phase
-                this.pulse = Math.sin(Date.now() * 0.001 + this.phase);
+                // Twinkle
+                this.pulse = Math.sin(Date.now() * 0.001 * this.twinkleSpeed + this.phase);
+
+                // Radius pulses more during storms
+                const stormPulse = weather.storm > 0.3 ? Math.sin(Date.now() * 0.003 + this.phase) * weather.storm * 0.5 : 0;
+                this.radius = this.baseRadius * (1 + this.pulse * 0.15 + stormPulse);
+
+                // Brightness affected by density and nebula
+                this.brightness = 0.4 + (weather.density / 20) * 0.3 + this.pulse * 0.15 + weather.nebula * 0.15;
+                this.brightness = Math.min(1, Math.max(0.2, this.brightness));
             }
         }
 
+        /* ─── Main Engine ─── */
         class IbonariumEngine {
             constructor() {
                 this.canvas = document.getElementById('canvas');
@@ -473,12 +650,20 @@
                 this.w = 0;
                 this.h = 0;
                 this.lastUpdate = Date.now();
+                this.lastFrameTime = Date.now();
+                this.edges = 0;
+
+                // Smoothed weather for gradual transitions
+                this.smooth = {
+                    kp: 2, wind: 380, bz: 0, density: 5, f107: 120,
+                    storm: 0, nebula: 0
+                };
 
                 this.init();
                 this.handleResize();
                 window.addEventListener('resize', () => this.handleResize());
 
-                // Start Cycle
+                // Start weather sync cycle
                 this.weather.sync();
                 setInterval(() => {
                     this.weather.sync();
@@ -494,8 +679,8 @@
                 this.canvas.width = this.w;
                 this.canvas.height = this.h;
 
-                for (let i = 0; i < CONFIG.nodeCount; i++) {
-                    this.nodes.push(new Node(this.w, this.h));
+                for (let i = 0; i < CONFIG.baseNodeCount; i++) {
+                    this.nodes.push(new Node(this.w, this.h, this.weather.data));
                 }
             }
 
@@ -506,40 +691,78 @@
                 this.canvas.height = this.h;
             }
 
-            update() {
-                this.nodes.forEach(n => n.update(this.weather.data, this.w, this.h));
+            smoothValue(current, target, rate) {
+                return current + (target - current) * rate;
+            }
 
-                // Update Timer UI
-                const timeLeft = Math.max(0, 60 - Math.floor((Date.now() - this.lastUpdate) / 1000));
+            update() {
+                const now = Date.now();
+                const dt = Math.min(3, (now - this.lastFrameTime) / 16.67); // normalize to ~60fps
+                this.lastFrameTime = now;
+
+                // Smooth weather transitions
+                const r = 0.03;
+                const ws = this.weather.data;
+                this.smooth.kp = this.smoothValue(this.smooth.kp, ws.kp, r);
+                this.smooth.wind = this.smoothValue(this.smooth.wind, ws.wind, r);
+                this.smooth.bz = this.smoothValue(this.smooth.bz, ws.bz, r);
+                this.smooth.density = this.smoothValue(this.smooth.density, ws.density, r);
+                this.smooth.f107 = this.smoothValue(this.smooth.f107, ws.f107, r);
+                this.smooth.storm = this.smoothValue(this.smooth.storm, ws.storm, r);
+                this.smooth.nebula = this.smoothValue(this.smooth.nebula, ws.nebula, r);
+
+                // Update node count — add/remove stars based on density
+                const targetCount = this.weather.getTargetNodeCount();
+                if (this.nodes.length < targetCount) {
+                    const toAdd = Math.min(5, targetCount - this.nodes.length);
+                    for (let i = 0; i < toAdd; i++) {
+                        this.nodes.push(new Node(this.w, this.h, ws));
+                    }
+                } else if (this.nodes.length > targetCount) {
+                    this.nodes.splice(this.nodes.length - Math.min(5, this.nodes.length - targetCount));
+                }
+
+                // Update all nodes
+                this.nodes.forEach(n => {
+                    n.update(this.smooth, this.w, this.h, dt);
+                    // Periodically re-tint color based on weather
+                    if (Math.random() < 0.005) {
+                        n.applyWeatherColor(this.smooth);
+                    }
+                });
+
+                // Update timer UI
+                const timeLeft = Math.max(0, 60 - Math.floor((now - this.lastUpdate) / 1000));
                 document.getElementById('update-timer').textContent = `Next update in: ${timeLeft}s`;
             }
 
             draw() {
-                const ws = this.weather.data;
+                const ws = this.smooth;
                 const time = Date.now() * 0.001;
 
-                // Trail effect (Opacity affected by Kp)
-                const trailAlpha = Math.max(0.1, 0.4 - (ws.kp * 0.03));
+                // ─── BACKGROUND ───
+                // Trail fade: less fade = more persistent trails (higher Kp)
+                const trailAlpha = Math.max(0.08, 0.35 - (ws.kp * 0.035));
 
-                // Background shifting based on Nebula force
-                const hue = 240 + (ws.nebula * 60); // Shifts from blue to purple/cyan
-                const sat = 20 + (ws.nebula * 30);
-                const lum = 2 + (ws.nebula * 5);
+                // Background hue shifts: calm=deep blue, stormy=dark red/purple
+                const bgHue = 240 + (ws.storm * 80); // 240 (blue) → 320 (magenta)
+                const bgSat = 30 + (ws.nebula * 40);
+                const bgLum = 1.5 + (ws.kp * 0.4) + (ws.nebula * 4);
 
-                this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${trailAlpha})`;
+                this.ctx.fillStyle = `hsla(${bgHue}, ${bgSat}%, ${bgLum}%, ${trailAlpha})`;
                 this.ctx.fillRect(0, 0, this.w, this.h);
 
-                // CAMERA ZOOM LOGIC
-                this.ctx.save();
-                this.ctx.translate(this.w / 2, this.h / 2);
-                this.ctx.scale(CONFIG.cameraZoom, CONFIG.cameraZoom);
-                this.ctx.translate(-this.w / 2, -this.h / 2);
+                // ─── NEBULA GLOW ───
+                this.drawNebula(time, ws);
 
-                // DRAW NEBULA GLOW
-                this.drawGlow(time, ws);
+                // ─── AURORA EFFECT (during storms) ───
+                if (ws.storm > 0.15) {
+                    this.drawAurora(time, ws);
+                }
 
-                let edges = 0;
-                this.ctx.lineWidth = 0.5 + (ws.density * 0.05);
+                // ─── CONNECTIONS ───
+                this.edges = 0;
+                const connectionDist = CONFIG.connectionDist + (ws.bz < 0 ? Math.abs(ws.bz) * 8 : 0);
 
                 for (let i = 0; i < this.nodes.length; i++) {
                     const n1 = this.nodes[i];
@@ -548,43 +771,49 @@
                         const n2 = this.nodes[j];
                         const dx = n1.x - n2.x;
                         const dy = n1.y - n2.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const distSq = dx * dx + dy * dy;
 
-                        // Connection distance influenced by Bz (negative Bz expands network)
-                        const activeDist = CONFIG.connectionDist + (ws.bz < 0 ? Math.abs(ws.bz) * 10 : 0);
+                        if (distSq < connectionDist * connectionDist) {
+                            const dist = Math.sqrt(distSq);
+                            this.edges++;
 
-                        if (dist < activeDist) {
-                            edges++;
-                            const opacity = (1 - dist / activeDist) * 0.5;
+                            const proximity = 1 - dist / connectionDist;
+                            const opacity = proximity * 0.5;
 
-                            // Constellation logic: if both nodes are "Hubs" or connecting Hub to others
-                            let isConstellation = n1.type === 'C' || n2.type === 'C';
+                            // Constellation hub connections
+                            const isHub = n1.type === 'C' || n2.type === 'C';
 
-                            if (isConstellation && dist < activeDist * 1.5) {
-                                this.ctx.lineWidth = (2 + ws.density * 0.1) * (1 - dist / (activeDist * 1.5));
-                                this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.4})`;
+                            if (isHub && dist < connectionDist * 1.4) {
+                                const hubOpacity = opacity * 0.5;
+                                this.ctx.lineWidth = (1.5 + ws.density * 0.08) * proximity;
+                                this.ctx.strokeStyle = `rgba(255, 255, 255, ${hubOpacity})`;
+                            } else if (n1.type === 'A' && n2.type === 'A') {
+                                this.ctx.lineWidth = 0.4 + ws.density * 0.04;
+                                // Color shifts toward red during storms
+                                const sr = Math.floor(157 + ws.storm * 80);
+                                const sg = Math.floor(138 - ws.storm * 50);
+                                const sb = Math.floor(255 - ws.storm * 100);
+                                this.ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${opacity})`;
+                            } else if (n1.type === 'B' && n2.type === 'B') {
+                                this.ctx.lineWidth = 0.4 + ws.density * 0.04;
+                                this.ctx.strokeStyle = `rgba(255, 90, 181, ${opacity})`;
                             } else {
-                                this.ctx.lineWidth = 0.5 + (ws.density * 0.05);
-                                if (n1.type === 'A' && n2.type === 'A') {
-                                    this.ctx.strokeStyle = `rgba(157, 138, 255, ${opacity})`;
-                                } else if (n1.type === 'B' && n2.type === 'B') {
-                                    this.ctx.strokeStyle = `rgba(255, 90, 181, ${opacity})`;
+                                // Mixed connections — influenced by Bz
+                                this.ctx.lineWidth = 0.3 + ws.density * 0.03;
+                                if (ws.bz < -3) {
+                                    this.ctx.strokeStyle = `rgba(255, 200, 100, ${opacity * 0.6})`;
                                 } else {
-                                    if (ws.storm > 0.2) {
-                                        this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.8})`;
-                                    } else {
-                                        this.ctx.strokeStyle = `rgba(180, 150, 255, ${opacity * 0.3})`;
-                                    }
+                                    this.ctx.strokeStyle = `rgba(180, 150, 255, ${opacity * 0.25})`;
                                 }
                             }
 
                             this.ctx.beginPath();
                             this.ctx.moveTo(n1.x, n1.y);
 
-                            // Storm adds "noise" to lines
-                            if (ws.storm > 0.3) {
-                                const mx = (n1.x + n2.x) / 2 + (Math.random() - 0.5) * 10 * ws.storm;
-                                const my = (n1.y + n2.y) / 2 + (Math.random() - 0.5) * 10 * ws.storm;
+                            // Storm adds noise to connection lines
+                            if (ws.storm > 0.3 && dist < connectionDist * 0.7) {
+                                const mx = (n1.x + n2.x) / 2 + (Math.random() - 0.5) * 12 * ws.storm;
+                                const my = (n1.y + n2.y) / 2 + (Math.random() - 0.5) * 12 * ws.storm;
                                 this.ctx.quadraticCurveTo(mx, my, n2.x, n2.y);
                             } else {
                                 this.ctx.lineTo(n2.x, n2.y);
@@ -592,37 +821,51 @@
                             this.ctx.stroke();
                         }
                     }
+                }
 
-                    // Draw node with glow
-                    const nodeOpacity = 0.5 + n1.pulse * 0.5;
-                    const rSize = n1.radius * (1 + n1.pulse * 0.2);
+                // ─── STARS ───
+                for (let i = 0; i < this.nodes.length; i++) {
+                    const n = this.nodes[i];
+                    const alpha = n.brightness;
 
-                    if (n1.type === 'C') {
-                        // Constellation Hub Glow
-                        this.ctx.shadowBlur = 15;
-                        this.ctx.shadowColor = 'white';
-                        this.ctx.fillStyle = `rgba(255, 255, 255, ${nodeOpacity})`;
+                    if (n.type === 'C') {
+                        // Hub stars: bright white with strong glow
+                        const glowSize = 12 + ws.density * 1.5 + ws.storm * 8;
+                        this.ctx.shadowBlur = glowSize;
+                        this.ctx.shadowColor = `rgba(200, 220, 255, ${alpha})`;
+                        this.ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
                     } else {
-                        this.ctx.shadowBlur = 5;
-                        this.ctx.shadowColor = n1.type === 'A' ? 'var(--accent-a)' : 'var(--accent-b)';
-                        this.ctx.fillStyle = n1.type === 'A' ? `rgba(180, 160, 255, ${nodeOpacity})` : `rgba(255, 140, 200, ${nodeOpacity})`;
+                        // Regular stars
+                        const glowSize = 4 + ws.density * 0.5;
+                        this.ctx.shadowBlur = glowSize;
+                        const c = n.color;
+                        this.ctx.shadowColor = `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha * 0.8})`;
+                        this.ctx.fillStyle = `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
                     }
 
                     this.ctx.beginPath();
-                    this.ctx.arc(n1.x, n1.y, rSize, 0, Math.PI * 2);
+                    this.ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
                     this.ctx.fill();
-                    this.ctx.shadowBlur = 0; // Reset for next elements
+
+                    // Extra glow ring for bright stars during nebula
+                    if (n.type === 'C' && ws.nebula > 0.3) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(n.x, n.y, n.radius * 2.5, 0, Math.PI * 2);
+                        this.ctx.fillStyle = `rgba(0, 242, 255, ${ws.nebula * 0.08})`;
+                        this.ctx.fill();
+                    }
                 }
 
-                this.ctx.restore(); // Restore from camera zoom
+                this.ctx.shadowBlur = 0;
 
-                document.getElementById('nodes-count').textContent = `Nodes: ${CONFIG.nodeCount} | Edges: ${edges}`;
+                // ─── UI UPDATES ───
+                document.getElementById('nodes-count').textContent =
+                    `Nodes: ${this.nodes.length} | Edges: ${this.edges}`;
 
-                // Update Stability Ratio (Three-way balance)
+                // Stability bars
                 const total = 100;
-                const etherPct = ws.nebula * 40; // Max 40% influence
+                const etherPct = ws.nebula * 40;
                 const remaining = total - etherPct;
-
                 const orderRatio = (50 + (ws.bz * 5) - (ws.kp * 2)) / 100;
                 const orderPct = Math.max(0, Math.min(remaining, remaining * orderRatio));
                 const fluxPct = remaining - orderPct;
@@ -630,45 +873,89 @@
                 document.getElementById('bar-a').style.width = orderPct + '%';
                 document.getElementById('bar-b').style.width = fluxPct + '%';
                 document.getElementById('bar-c').style.width = etherPct + '%';
-
                 document.getElementById('stat-a').textContent = orderPct.toFixed(1) + '%';
                 document.getElementById('stat-b').textContent = fluxPct.toFixed(1) + '%';
                 document.getElementById('stat-c').textContent = etherPct.toFixed(1) + '%';
             }
 
-            drawGlow(time, ws) {
+            drawNebula(time, ws) {
                 this.ctx.save();
                 this.ctx.globalCompositeOperation = 'screen';
 
-                // Density and Nebula force effect ambient brightness
-                const ambient = 0.05 + (ws.density * 0.005) + (ws.nebula * 0.1);
+                const ambient = 0.04 + (ws.density * 0.004) + (ws.nebula * 0.12);
 
-                const g1 = this.ctx.createRadialGradient(this.w * 0.3, this.h * 0.3, 0, this.w * 0.3, this.h * 0.3, this.w * 0.6);
+                // Two ambient glows
+                const g1 = this.ctx.createRadialGradient(
+                    this.w * 0.3, this.h * 0.3, 0,
+                    this.w * 0.3, this.h * 0.3, this.w * 0.6
+                );
                 g1.addColorStop(0, `hsla(250, 60%, 15%, ${ambient})`);
                 g1.addColorStop(1, 'transparent');
 
-                const g2 = this.ctx.createRadialGradient(this.w * 0.7, this.h * 0.7, 0, this.w * 0.7, this.h * 0.7, this.w * 0.6);
-                g2.addColorStop(0, `hsla(320, 60%, 15%, ${ambient})`);
+                const g2 = this.ctx.createRadialGradient(
+                    this.w * 0.7, this.h * 0.7, 0,
+                    this.w * 0.7, this.h * 0.7, this.w * 0.6
+                );
+                // Second glow shifts hue with solar wind
+                const g2hue = 320 + (Math.min(1, (ws.wind - 300) / 400)) * 40;
+                g2.addColorStop(0, `hsla(${g2hue}, 60%, 15%, ${ambient})`);
                 g2.addColorStop(1, 'transparent');
-
-                // Third Nebula Glow (ETHER)
-                if (ws.nebula > 0.2) {
-                    const g3 = this.ctx.createRadialGradient(
-                        this.w * (0.5 + Math.sin(time * 0.2) * 0.2),
-                        this.h * (0.5 + Math.cos(time * 0.2) * 0.2),
-                        0,
-                        this.w * 0.5, this.h * 0.5, this.w * 0.8
-                    );
-                    g3.addColorStop(0, `hsla(180, 70%, 20%, ${ws.nebula * 0.2})`);
-                    g3.addColorStop(1, 'transparent');
-                    this.ctx.fillStyle = g3;
-                    this.ctx.fillRect(0, 0, this.w, this.h);
-                }
 
                 this.ctx.fillStyle = g1;
                 this.ctx.fillRect(0, 0, this.w, this.h);
                 this.ctx.fillStyle = g2;
                 this.ctx.fillRect(0, 0, this.w, this.h);
+
+                // Third: ETHER nebula — moves and breathes
+                if (ws.nebula > 0.15) {
+                    const cx = this.w * (0.5 + Math.sin(time * 0.15) * 0.25);
+                    const cy = this.h * (0.5 + Math.cos(time * 0.12) * 0.2);
+                    const g3 = this.ctx.createRadialGradient(cx, cy, 0, this.w * 0.5, this.h * 0.5, this.w * 0.7);
+                    g3.addColorStop(0, `hsla(180, 70%, 20%, ${ws.nebula * 0.18})`);
+                    g3.addColorStop(0.5, `hsla(200, 50%, 12%, ${ws.nebula * 0.08})`);
+                    g3.addColorStop(1, 'transparent');
+                    this.ctx.fillStyle = g3;
+                    this.ctx.fillRect(0, 0, this.w, this.h);
+                }
+
+                this.ctx.restore();
+            }
+
+            drawAurora(time, ws) {
+                this.ctx.save();
+                this.ctx.globalCompositeOperation = 'screen';
+
+                // Aurora curtains at the bottom during geomagnetic storms
+                const auroraIntensity = ws.storm * 0.15;
+                const auroraH = this.h * (0.15 + ws.storm * 0.2);
+
+                for (let i = 0; i < 3; i++) {
+                    const yBase = this.h - auroraH * (0.5 + i * 0.3);
+                    const gradient = this.ctx.createLinearGradient(0, yBase, 0, this.h);
+
+                    // Green aurora base, purple/red during strong storms
+                    const hue = 120 + (ws.storm > 0.5 ? (ws.storm - 0.5) * 200 : 0) + i * 30;
+                    gradient.addColorStop(0, 'transparent');
+                    gradient.addColorStop(0.3, `hsla(${hue}, 80%, 40%, ${auroraIntensity * 0.4})`);
+                    gradient.addColorStop(0.6, `hsla(${hue + 20}, 70%, 30%, ${auroraIntensity * 0.6})`);
+                    gradient.addColorStop(1, `hsla(${hue + 40}, 60%, 20%, ${auroraIntensity * 0.2})`);
+
+                    this.ctx.fillStyle = gradient;
+
+                    // Wavy aurora curtain
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, this.h);
+                    for (let x = 0; x <= this.w; x += 20) {
+                        const wave = Math.sin(x * 0.003 + time * (0.5 + i * 0.3) + i * 2) *
+                                     (15 + ws.storm * 25) +
+                                     Math.sin(x * 0.007 + time * 0.3) * 8;
+                        this.ctx.lineTo(x, yBase + wave);
+                    }
+                    this.ctx.lineTo(this.w, this.h);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                }
+
                 this.ctx.restore();
             }
 
@@ -679,24 +966,22 @@
             }
         }
 
-        // Uptime Clock Logic
+        /* ─── Uptime Clock ─── */
         const startDate = new Date('2026-01-31T00:00:00');
         function updateUptime() {
             const now = new Date();
             const diff = now - startDate;
-
             const days = Math.floor(diff / (1000 * 60 * 60 * 24));
             const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
             const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
             const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
             const display = document.getElementById('uptime-clock');
             if (display) {
                 display.textContent = `${days}d ${hours}h ${minutes}m ${seconds}s`;
             }
         }
 
-        // Start Ibonarium
+        /* ─── Boot ─── */
         window.onload = () => {
             new IbonariumEngine();
             setInterval(updateUptime, 1000);
